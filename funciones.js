@@ -1,11 +1,23 @@
-export async function createItem(db,collectionn){
-    rl.question('Ingrese un nombre: ', async(name) => {
-        const collection = db.collection(collectionn)
-        await collection.insertOne({name})
-        console.log('Elemento creado')
-        showMenu(db)
-    })
+import fs from "fs";
+import path from "path";
+
+export async function readitem(collectionnameparam){
+    const nombreColeccion = collectionnameparam;
+
+    const filepath = path.join(process.cwd(),'raw-data',`${nombreColeccion}.csv`);
+    try{
+        const filecontent = fs.readFileSync(filepath,"utf-8");
+        return filecontent;
+    }catch(error){
+        if(error.code==='ENOENT'){
+            console.error(`Error: El archivo "${nombreColeccion}.csv" no se encontró en la ruta: ${filepath}`)
+        }else{
+            console.error("ocurrio un error inesperado",error);
+        }
+        return null;
+    }
 }
+
 
 export async function listItems(db){
     const collection = db.collection(collectionName)
