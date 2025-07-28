@@ -2,7 +2,7 @@ import readline from 'readline';
 import fs from "fs";
 // import * as h from "./funciones.js";
 const collectionName = {
-    area: 'area',
+    area: 'areas',
     cargo: 'cargos',
     ciudad: 'ciudades',
     concepto: 'conceptos',

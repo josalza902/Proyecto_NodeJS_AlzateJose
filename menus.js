@@ -1,145 +1,350 @@
-import  readline  from 'readline';
-import { MongoClient, ObjectId } from "mongodb";
+import readline from 'readline';
+import { MongoClient } from "mongodb";
 import fs from "fs";
+import path from "path";
 
-import {readitem} from'./funciones.js';
+// Importa las funciones de lógica de base de datos, incluyendo la nueva deleteDocument
+import { readAndInsertCsv, updateDocument, deleteDocument } from './funciones.js'; 
 
-
-
-// const test = fs.readFileSync("./JOSEXCEL.csv","utf-8")
-// console.log(test)
-
- const url = 'mongodb://localhost:27017'
- const dbName = 'nominaAcme'
-const collectionName = {
-    area:'areas',
-    cargo:'cargos',
-    ciudad:'ciudades',
-    concepto:'conceptos',
-    contrato:'contratos',
-    departamento:'departamentos',
+const url = 'mongodb://localhost:27017';
+const dbName = 'nominaAcme';
+const collectionNames = {
+    area: 'areas',
+    cargo: 'cargos',
+    ciudad: 'ciudades',
+    concepto: 'conceptos',
+    contrato: 'contratos',
+    departamento: 'departamentos',
     empleado: 'empleados',
-    nomina:'nominas',
-    sacarNomina:'sacarNominas',
-    tipo_contrato:'tipos_contratos',
-    tipo_id:'tipos_identificaciones',
-    tipo_novedad:'tipos_novedades'
+    nomina: 'nominas',
+    sacarNomina: 'sacarNominas',
+    tipo_contrato: 'tipos_contratos',
+    tipo_id: 'tipos_identificaciones',
+    tipo_novedad: 'tipos_novedades'
 };
 
-// const client =  new MongoClient(url)
-
-
+const client = new MongoClient(url);
 const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-})
+});
+
+async function connectDb() {
+    // --- ¡Cambio aquí! ---
+    // Verifica si la topología está conectada
+    if (!client.topology || !client.topology.isConnected()) { 
+        console.log('Conectando a MongoDB...'); // Mensaje más descriptivo
+        await client.connect();
+        console.log('Conectado a MongoDB');
+    } else {
+        console.log('Ya conectado a MongoDB'); // Mensaje cuando ya está conectado
+    }
+    return client.db(dbName);
+}
 
 function input(pregunta) {
     return new Promise(resolve => rl.question(pregunta, resolve));
 }
 
-function showMenu(){
-    console.log('menu')
-    console.log('guardar data en base de datos desde csv')
-    console.log('listar')
-    console.log('actualizar')
-    console.log('eliminar')
-    console.log('salir')
-    rl.question('Seleciona una opcion', async opt => {
-        switch(opt){
-            case '1':
-                await askdb();
-                break;
-            case '2':
-                listItems(db);
-                break;
-            case '3':
-                updateItem(db);
-                break;
-            case '4':
-                deleteItem(db);
-                break;
-            case '5':
-                rl.close();
-                break;
-            default:
-                console.log('Opcion Invalida. ')
-                showMenu();
-        }
-    })
-}
-async function askdb (){
+async function showMenu() {
+    console.log('\n--- Menú Principal ---');
+    console.log('1. Guardar data en base de datos desde CSV');
+    console.log('2. Listar ítems');
+    console.log('3. Actualizar ítem');
+    console.log('4. Eliminar ítem');
+    console.log('5. Salir');
+    
+    const opt = await input('Selecciona una opción: ');
 
-    console.log('1. area')
-    console.log('2. cargo')
-    console.log('3. ciudad')
-    console.log('4. concepto')
-    console.log('5. contrato')
-    console.log('6. departamento')
-    console.log('7. empleado')
-    console.log('8. nomina')
-    console.log('9. sacarnomina')
-    console.log('10. tipo_contrato')
-    console.log('11. tipo_id')
-    console.log('12. tipo_novedad')
-    const p = await input("que coleccion deseas");
-    let selectedcollection = '';
-    switch(p){
-        case'1':
-            selectedcollection= collectionName.area; break;
-        // case'2':
-        //     return createItem(dbName,collectionName.cargo);
-        // case'3':
-        //     return createItem(dbName,collectionName.ciudad);
-        // case'4':
-        //     return createItem(dbName,collectionName.concepto);
-        // case'5':
-        //     return createItem(dbName,collectionName.contrato);
-        // case'6':
-        //     return createItem(dbName,collectionName.departamento);
-        // case'7':
-        //     return createItem(dbName,collectionName.empleado);
-        // case'8':
-        //     return createItem(dbName,collectionName.nomina);
-        // case'9':
-        //     return createItem(dbName,collectionName.sacarNomina);
-        // case'10':
-        //     return createItem(dbName,collectionName.tipo_contrato);
-        // case'11':
-        //     return createItem(dbName,collectionName.tipo_id);
-        // case'12':
-        //     return createItem(dbName,collectionName.tipo_id);
-         default:
-            console.log('opcion no valida')
-            showMenu();
+    switch (opt) {
+        case '1':
+            await askdb();
+            break;
+        case '2':
+            await listItems(await connectDb()); 
+            break;
+        case '3':
+            await updateItem(await connectDb());
+            break;
+        case '4':
+            await deleteItem(await connectDb()); // Llamada a la función del menú
+            break;
+        case '5':
+            console.log('Saliendo...');
+            rl.close();
+            if (client.isConnected()) {
+                await client.close();
+                console.log('Conexión a MongoDB cerrada.');
+            }
+            return;
+        default:
+            console.log('Opción Inválida.');
+    }
+    showMenu();
+}
+
+async function askdb() {
+    console.log('\n--- Seleccionar Colección para Importar CSV ---');
+    console.log('1. Área');
+    console.log('2. Cargo');
+    console.log('3. Ciudad');
+    console.log('4. Concepto');
+    console.log('5. Contrato');
+    console.log('6. Departamento');
+    console.log('7. Empleado');
+    console.log('8. Nómina');
+    console.log('9. Sacar Nómina');
+    console.log('10. Tipo Contrato');
+    console.log('11. Tipo ID');
+    console.log('12. Tipo Novedad');
+    console.log('0. Volver al Menú Principal');
+
+    const p = await input("¿Qué colección deseas importar desde CSV?: ");
+    let selectedCollectionKey;
+
+    switch (p) {
+        case '1': selectedCollectionKey = 'area'; break;
+        case '2': selectedCollectionKey = 'cargo'; break;
+        case '3': selectedCollectionKey = 'ciudad'; break;
+        case '4': selectedCollectionKey = 'concepto'; break;
+        case '5': selectedCollectionKey = 'contrato'; break;
+        case '6': selectedCollectionKey = 'departamento'; break;
+        case '7': selectedCollectionKey = 'empleado'; break;
+        case '8': selectedCollectionKey = 'nomina'; break;
+        case '9': selectedCollectionKey = 'sacarNomina'; break;
+        case '10': selectedCollectionKey = 'tipo_contrato'; break;
+        case '11': selectedCollectionKey = 'tipo_id'; break;
+        case '12': selectedCollectionKey = 'tipo_novedad'; break;
+        case '0': return;
+        default: console.log('Opción no válida.'); return;
+    }
+
+    const collectionName = collectionNames[selectedCollectionKey];
+    const csvFilePath = path.join(process.cwd(), 'raw-data', `${collectionName}.csv`);
+
+    try {
+        const dbInstance = await connectDb();
+        console.log(`Intentando importar ${collectionName}.csv a la colección ${collectionName}...`);
+        await readAndInsertCsv(csvFilePath, dbInstance, collectionName);
+        console.log(`Importación de ${collectionName} completada.`);
+    } catch (error) {
+        console.error(`Error al importar datos para ${selectedCollectionKey}:`, error.message);
+    }
+}
+
+async function listItems(db) {
+    console.log('\n--- Listar Ítems ---');
+    console.log('Selecciona la colección a listar:');
+    console.log('1. Área');
+    console.log('2. Cargo');
+    console.log('3. Ciudad');
+    console.log('4. Concepto');
+    console.log('5. Contrato');
+    console.log('6. Departamento');
+    console.log('7. Empleado');
+    console.log('8. Nómina');
+    console.log('9. Sacar Nómina');
+    console.log('10. Tipo Contrato');
+    console.log('11. Tipo ID');
+    console.log('12. Tipo Novedad');
+    console.log('0. Volver al Menú Principal');
+
+    const p = await input("¿Qué colección deseas listar? (1-12 o 0 para volver): ");
+    let selectedCollectionKey;
+
+    switch (p) {
+        case '1': selectedCollectionKey = 'area'; break;
+        case '2': selectedCollectionKey = 'cargo'; break;
+        case '3': selectedCollectionKey = 'ciudad'; break;
+        case '4': selectedCollectionKey = 'concepto'; break;
+        case '5': selectedCollectionKey = 'contrato'; break;
+        case '6': selectedCollectionKey = 'departamento'; break;
+        case '7': selectedCollectionKey = 'empleado'; break;
+        case '8': selectedCollectionKey = 'nomina'; break;
+        case '9': selectedCollectionKey = 'sacarNomina'; break;
+        case '10': selectedCollectionKey = 'tipo_contrato'; break;
+        case '11': selectedCollectionKey = 'tipo_id'; break;
+        case '12': selectedCollectionKey = 'tipo_novedad'; break;
+        case '0': return;
+        default: console.log('Opción no válida.'); return;
+    }
+
+    const collectionName = collectionNames[selectedCollectionKey];
+    try {
+        const collection = db.collection(collectionName);
+        console.log(`Buscando documentos en la colección '${collectionName}'...`);
+        
+        const items = await collection.find({}).toArray();
+
+        if (items.length > 0) {
+            console.log(`Documentos encontrados en '${collectionName}':`);
+            console.table(items); 
+        } else {
+            console.log(`No hay documentos en la colección '${collectionName}'.`);
+        }
+    } catch (error) {
+        console.error(`Error al listar ítems de ${collectionName}:`, error);
+    }
+}
+
+async function updateItem(db) {
+    console.log('\n--- Actualizar Ítem ---');
+    console.log('Selecciona la colección donde está el ítem a actualizar:');
+    console.log('1. Área');
+    console.log('2. Cargo');
+    console.log('3. Ciudad');
+    console.log('4. Concepto');
+    console.log('5. Contrato');
+    console.log('6. Departamento');
+    console.log('7. Empleado');
+    console.log('8. Nómina');
+    console.log('9. Sacar Nómina');
+    console.log('10. Tipo Contrato');
+    console.log('11. Tipo ID');
+    console.log('12. Tipo Novedad');
+    console.log('0. Volver al Menú Principal');
+
+    const p = await input("¿En qué colección deseas actualizar un ítem? (1-12 o 0 para volver): ");
+    let selectedCollectionKey;
+
+    switch (p) {
+        case '1': selectedCollectionKey = 'area'; break;
+        case '2': selectedCollectionKey = 'cargo'; break;
+        case '3': selectedCollectionKey = 'ciudad'; break;
+        case '4': selectedCollectionKey = 'concepto'; break;
+        case '5': selectedCollectionKey = 'contrato'; break;
+        case '6': selectedCollectionKey = 'departamento'; break;
+        case '7': selectedCollectionKey = 'empleado'; break;
+        case '8': selectedCollectionKey = 'nomina'; break;
+        case '9': selectedCollectionKey = 'sacarNomina'; break;
+        case '10': selectedCollectionKey = 'tipo_contrato'; break;
+        case '11': selectedCollectionKey = 'tipo_id'; break;
+        case '12': selectedCollectionKey = 'tipo_novedad'; break;
+        case '0':
+            console.log('Volviendo al menú principal.');
+            return;
+        default:
+            console.log('Opción no válida.');
             return;
     }
-    const filecontent = await readitem(selectedcollection);
-    if (filecontent !== null){
-        console.table(filecontent)
-    }else{
-        console.log("no se pudo mostrar el contenido")
+
+    const collectionName = collectionNames[selectedCollectionKey];
+
+    try {
+        const idToUpdate = await input(`Ingresa el _id del documento en '${collectionName}' que deseas actualizar: `);
+        
+        console.log('\nIngresa los campos a actualizar (nombreCampo:nuevoValor). Presiona Enter sin escribir nada para terminar.');
+        console.log('Ejemplo: nombre:Nuevo Nombre, edad:30');
+
+        let updates = {};
+        while (true) {
+            const fieldInput = await input('Campo a actualizar (ej. "nombre:NuevoValor" o Enter para finalizar): ');
+            if (fieldInput.trim() === '') {
+                break;
+            }
+
+            const parts = fieldInput.split(':');
+            if (parts.length < 2) {
+                console.log('Formato incorrecto. Usa "nombreCampo:nuevoValor".');
+                continue;
+            }
+
+            const fieldName = parts[0].trim();
+            let fieldValue = parts.slice(1).join(':').trim();
+
+            if (!isNaN(fieldValue) && fieldValue !== '') {
+                fieldValue = Number(fieldValue);
+            }
+            updates[fieldName] = fieldValue;
+        }
+
+        if (Object.keys(updates).length === 0) {
+            console.log('No se ingresaron campos para actualizar. Operación cancelada.');
+            return;
+        }
+
+        const updateResult = await updateDocument(db, collectionName, idToUpdate, updates);
+
+        if (updateResult.matchedCount === 0) {
+            console.log(updateResult.message);
+        } else if (updateResult.modifiedCount === 0) {
+            console.log(updateResult.message);
+        } else {
+            console.log(updateResult.message);
+            if (updateResult.updatedDoc) {
+                console.log('\n--- Documento actualizado ---');
+                console.table([updateResult.updatedDoc]);
+            }
+        }
+
+    } catch (error) {
+        console.error(`Error en la operación de actualización:`, error.message);
+    }
+}
+
+
+async function deleteItem(db) {
+    console.log('\n--- Eliminar Ítem ---');
+    console.log('Selecciona la colección donde está el ítem a eliminar:');
+    console.log('1. Área');
+    console.log('2. Cargo');
+    console.log('3. Ciudad');
+    console.log('4. Concepto');
+    console.log('5. Contrato');
+    console.log('6. Departamento');
+    console.log('7. Empleado');
+    console.log('8. Nómina');
+    console.log('9. Sacar Nómina');
+    console.log('10. Tipo Contrato');
+    console.log('11. Tipo ID');
+    console.log('12. Tipo Novedad');
+    console.log('0. Volver al Menú Principal');
+
+    const p = await input("¿De qué colección deseas eliminar un ítem? (1-12 o 0 para volver): ");
+    let selectedCollectionKey;
+
+    switch (p) {
+        case '1': selectedCollectionKey = 'area'; break;
+        case '2': selectedCollectionKey = 'cargo'; break;
+        case '3': selectedCollectionKey = 'ciudad'; break;
+        case '4': selectedCollectionKey = 'concepto'; break;
+        case '5': selectedCollectionKey = 'contrato'; break;
+        case '6': selectedCollectionKey = 'departamento'; break;
+        case '7': selectedCollectionKey = 'empleado'; break;
+        case '8': selectedCollectionKey = 'nomina'; break;
+        case '9': selectedCollectionKey = 'sacarNomina'; break;
+        case '10': selectedCollectionKey = 'tipo_contrato'; break;
+        case '11': selectedCollectionKey = 'tipo_id'; break;
+        case '12': selectedCollectionKey = 'tipo_novedad'; break;
+        case '0':
+            console.log('Volviendo al menú principal.');
+            return;
+        default:
+            console.log('Opción no válida.');
+            return;
     }
 
+    const collectionName = collectionNames[selectedCollectionKey];
+
+    try {
+        const idToDelete = await input(`Ingresa el _id del documento en '${collectionName}' que deseas eliminar: `);
+        
+        // Opcional: Confirmar la eliminación para evitar borrados accidentales
+        const confirmDelete = await input(`¿Estás seguro de que quieres eliminar el documento con _id: ${idToDelete} de '${collectionName}'? (s/n): `);
+        if (confirmDelete.toLowerCase() !== 's') {
+            console.log('Operación de eliminación cancelada.');
+            return;
+        }
+
+        // ¡Llamamos a la función de lógica de negocio desde funciones.js!
+        const deleteResult = await deleteDocument(db, collectionName, idToDelete);
+
+        console.log(deleteResult.message); // Muestra el mensaje de éxito o no encontrado
+
+    } catch (error) {
+        // Captura errores lanzados desde deleteDocument (ej. ObjectId inválido)
+        console.error(`Error en la operación de eliminación:`, error.message);
+    }
 }
-showMenu()
 
-
-// async function main(){
-//     try{
-//         await client.connect();
-//         const db = client.db(dbName);
-//         showMenu(db);
-//     }catch(err){
-//         console.log('Error de conexion: ', err);
-//         rl.close;
-//     }
-// }
-
-// main();
-
-// rl.on("close", ()=>{
-//     client.close();
-//     console.log('Aplicacion finalizada')
-//     process.exit(0);
-// })
+showMenu().catch(console.error);
