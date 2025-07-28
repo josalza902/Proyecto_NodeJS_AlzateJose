@@ -3,8 +3,7 @@ import { MongoClient } from "mongodb";
 import fs from "fs";
 import path from "path";
 
-// Importa las funciones de lógica de base de datos, incluyendo la nueva deleteDocument
-import { readAndInsertCsv, updateDocument, deleteDocument } from './funciones.js'; 
+import { readAndInsertCsv, updateDocument, deleteDocument, reporte1, reporte2 ,reporte3,reporte4} from './funciones.js';
 
 const url = 'mongodb://localhost:27017';
 const dbName = 'nominaAcme';
@@ -17,7 +16,7 @@ const collectionNames = {
     departamento: 'departamentos',
     empleado: 'empleados',
     nomina: 'nominas',
-    sacarNomina: 'sacarNominas',
+    sacarNomina: 'sacarNominas', 
     tipo_contrato: 'tipos_contratos',
     tipo_id: 'tipos_identificaciones',
     tipo_novedad: 'tipos_novedades'
@@ -30,14 +29,12 @@ const rl = readline.createInterface({
 });
 
 async function connectDb() {
-    // --- ¡Cambio aquí! ---
-    // Verifica si la topología está conectada
-    if (!client.topology || !client.topology.isConnected()) { 
-        console.log('Conectando a MongoDB...'); // Mensaje más descriptivo
+    if (!client.topology || !client.topology.isConnected()) {
+        console.log('Conectando a MongoDB...');
         await client.connect();
         console.log('Conectado a MongoDB');
     } else {
-        console.log('Ya conectado a MongoDB'); // Mensaje cuando ya está conectado
+        console.log('Ya conectado a MongoDB');
     }
     return client.db(dbName);
 }
@@ -52,8 +49,12 @@ async function showMenu() {
     console.log('2. Listar ítems');
     console.log('3. Actualizar ítem');
     console.log('4. Eliminar ítem');
-    console.log('5. Salir');
-    
+    console.log('5. Reporte 1: Empleados con Contrato Vigente'); 
+    console.log('6. Reporte 2: Detalle de Nómina por Empleado'); 
+    console.log('7. Reporte 3: Empleados con Auxilio de Transporte');
+    console.log('8. Reporte 4: Resumen de Nómina por Código'); 
+    console.log('9. Salir'); 
+
     const opt = await input('Selecciona una opción: ');
 
     switch (opt) {
@@ -61,15 +62,32 @@ async function showMenu() {
             await askdb();
             break;
         case '2':
-            await listItems(await connectDb()); 
+            await listItems(await connectDb());
             break;
         case '3':
             await updateItem(await connectDb());
             break;
         case '4':
-            await deleteItem(await connectDb()); // Llamada a la función del menú
+            await deleteItem(await connectDb());
             break;
         case '5':
+            await reporte1(await connectDb());
+            break;
+        case '6': 
+            const dbInstance = await connectDb();
+            const empleadoId = await input('Ingresa el ID del empleado: ');
+            const nominaId = await input('Ingresa el ID de la nómina: ');
+            await reporte2(dbInstance, empleadoId, nominaId);
+            break;
+        case '7': 
+            await reporte3(await connectDb());
+            break;
+        case '8': 
+            const dbInstance8 = await connectDb(); 
+            const codigoNomina = await input('Ingresa el Código de la Nómina: ');
+            await reporte4(dbInstance8, codigoNomina);
+            break;
+        case '9': 
             console.log('Saliendo...');
             rl.close();
             if (client.isConnected()) {
@@ -329,20 +347,20 @@ async function deleteItem(db) {
     try {
         const idToDelete = await input(`Ingresa el _id del documento en '${collectionName}' que deseas eliminar: `);
         
-        // Opcional: Confirmar la eliminación para evitar borrados accidentales
+        
         const confirmDelete = await input(`¿Estás seguro de que quieres eliminar el documento con _id: ${idToDelete} de '${collectionName}'? (s/n): `);
         if (confirmDelete.toLowerCase() !== 's') {
             console.log('Operación de eliminación cancelada.');
             return;
         }
 
-        // ¡Llamamos a la función de lógica de negocio desde funciones.js!
+        
         const deleteResult = await deleteDocument(db, collectionName, idToDelete);
 
-        console.log(deleteResult.message); // Muestra el mensaje de éxito o no encontrado
+        console.log(deleteResult.message); 
 
     } catch (error) {
-        // Captura errores lanzados desde deleteDocument (ej. ObjectId inválido)
+        
         console.error(`Error en la operación de eliminación:`, error.message);
     }
 }
