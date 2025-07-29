@@ -4,6 +4,7 @@ import { ObjectId } from "mongodb";
 // import { error } from "console"; // 'error' de 'console' generalmente no se importa directamente
 
 // La función 'readitem' comentada está bien mantenerla así si es para uso futuro potencial o depuración.
+
 export async function readAndInsertCsv(csvfilepath, db, collectionName) {
     return new Promise((resolve, reject) => {
         if (!fs.existsSync(csvfilepath)) {
@@ -52,15 +53,15 @@ export async function readAndInsertCsv(csvfilepath, db, collectionName) {
                                 else if (head.startsWith('empleado_') && head.includes('telefono')) {
                                     tempDoc[head] = String(parsedvalue);
                                 }
-                                // 4. ***CAMBIO AQUÍ***: Manejar 'salarioBase' como Number (que mapeará a int en BSON)
-                                else if (head === 'salarioBase' && !isNaN(parsedvalue) && parsedvalue !== '') {
-                                    tempDoc[head] = Number(parsedvalue); // Volvemos a Number
+                                // 4. ***NUEVO CAMBIO AQUÍ***: Manejar 'salarioBase' como String
+                                else if (head === 'salarioBase') { // Ya no necesitamos verificar si es un número, solo convertirlo a string
+                                    tempDoc[head] = String(parsedvalue);
                                 }
-                                // 5. Conversión genérica a Number
+                                // 5. Conversión genérica a Number (aplicada si no es ninguno de los casos anteriores y es un número)
                                 else if (!isNaN(parsedvalue) && parsedvalue !== '') {
                                     tempDoc[head] = Number(parsedvalue);
                                 }
-                                // 6. Dejar como string por defecto
+                                // 6. Dejar como string por defecto (si no encaja en ninguna conversión específica)
                                 else {
                                     tempDoc[head] = parsedvalue;
                                 }
@@ -76,12 +77,10 @@ export async function readAndInsertCsv(csvfilepath, db, collectionName) {
                                     if (key.startsWith('empleado_')) {
                                         if (!finalDoc.empleado) finalDoc.empleado = {};
                                         const subKey = key.replace('empleado_', '');
-                                        // Forzar ObjectId para empleado.id
                                         finalDoc.empleado[subKey === 'id_nested' ? 'id' : subKey.replace('_nested', '')] = (subKey === 'id_nested' && ObjectId.isValid(tempDoc[key])) ? new ObjectId(tempDoc[key]) : tempDoc[key];
                                     } else if (key.startsWith('tipoContrato_')) {
                                         if (!finalDoc.tipoContrato) finalDoc.tipoContrato = {};
                                         const subKey = key.replace('tipoContrato_', '');
-                                        // Forzar ObjectId para tipoContrato.id
                                         finalDoc.tipoContrato[subKey === 'id_nested' ? 'id' : subKey.replace('_nested', '')] = (subKey === 'id_nested' && ObjectId.isValid(tempDoc[key])) ? new ObjectId(tempDoc[key]) : tempDoc[key];
                                     } else if (key.startsWith('cargo_')) {
                                         if (!finalDoc.cargo) finalDoc.cargo = {};
@@ -89,10 +88,8 @@ export async function readAndInsertCsv(csvfilepath, db, collectionName) {
                                         if (subKey.startsWith('area_')) {
                                             if (!finalDoc.cargo.area) finalDoc.cargo.area = {};
                                             const areaSubKey = subKey.replace('area_', '');
-                                            // Forzar ObjectId para cargo.area.id
                                             finalDoc.cargo.area[areaSubKey === 'id_nested' ? 'id' : areaSubKey.replace('_nested', '')] = (areaSubKey === 'id_nested' && ObjectId.isValid(tempDoc[key])) ? new ObjectId(tempDoc[key]) : tempDoc[key];
                                         } else {
-                                            // Forzar ObjectId para cargo.id
                                             finalDoc.cargo[subKey === 'id_nested' ? 'id' : subKey.replace('_nested', '')] = (subKey === 'id_nested' && ObjectId.isValid(tempDoc[key])) ? new ObjectId(tempDoc[key]) : tempDoc[key];
                                         }
                                     } else {
@@ -107,7 +104,6 @@ export async function readAndInsertCsv(csvfilepath, db, collectionName) {
                                     if (key.startsWith('departamento_') && key.endsWith('_nested')) {
                                         if (!finalDoc.departamento) finalDoc.departamento = {};
                                         const subKey = key.replace('departamento_', '').replace('_nested', '');
-                                        // Forzar ObjectId para departamento.id
                                         finalDoc.departamento[subKey === 'id' ? 'id' : subKey] = (subKey === 'id' && ObjectId.isValid(tempDoc[key])) ? new ObjectId(tempDoc[key]) : tempDoc[key];
                                     } else if (key === 'departamento_id') {
                                         finalDoc.departamento_id = tempDoc[key];
@@ -152,9 +148,9 @@ export async function readAndInsertCsv(csvfilepath, db, collectionName) {
                             else if (head.startsWith('empleado_') && head.includes('telefono')) {
                                 tempDoc[head] = String(parsedvalue);
                             }
-                            // ***CAMBIO AQUÍ***: Manejar 'salarioBase' como Number
-                            else if (head === 'salarioBase' && !isNaN(parsedvalue) && parsedvalue !== '') {
-                                tempDoc[head] = Number(parsedvalue); // Volvemos a Number
+                            // ***NUEVO CAMBIO AQUÍ***: Manejar 'salarioBase' como String
+                            else if (head === 'salarioBase') {
+                                tempDoc[head] = String(parsedvalue);
                             }
                             else if (!isNaN(parsedvalue) && parsedvalue !== '') {
                                 tempDoc[head] = Number(parsedvalue);
