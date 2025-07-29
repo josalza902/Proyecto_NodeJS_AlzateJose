@@ -3,7 +3,8 @@ import { MongoClient } from "mongodb";
 import fs from "fs";
 import path from "path";
 
-import { readAndInsertCsv, updateDocument, deleteDocument, reporte1, reporte2 ,reporte3,reporte4} from './funciones.js';
+// Asegúrate de importar la nueva función aquí
+import { readAndInsertCsv, readAndInsertAllCsvInDirectory, updateDocument, deleteDocument, reporte1, reporte2 ,reporte3,reporte4} from './funciones.js';
 
 const url = 'mongodb://localhost:27017';
 const dbName = 'nominaAcme';
@@ -16,7 +17,7 @@ const collectionNames = {
     departamento: 'departamentos',
     empleado: 'empleados',
     nomina: 'nominas',
-    sacarNomina: 'sacarNominas', 
+    sacarNomina: 'sacarNominas',
     tipo_contrato: 'tipos_contratos',
     tipo_id: 'tipos_identificaciones',
     tipo_novedad: 'tipos_novedades'
@@ -45,52 +46,56 @@ function input(pregunta) {
 
 async function showMenu() {
     console.log('\n--- Menú Principal ---');
-    console.log('1. Guardar data en base de datos desde CSV');
-    console.log('2. Listar ítems');
-    console.log('3. Actualizar ítem');
-    console.log('4. Eliminar ítem');
-    console.log('5. Reporte 1: Empleados con Contrato Vigente'); 
-    console.log('6. Reporte 2: Detalle de Nómina por Empleado'); 
-    console.log('7. Reporte 3: Empleados con Auxilio de Transporte');
-    console.log('8. Reporte 4: Resumen de Nómina por Código'); 
-    console.log('9. Salir'); 
+    console.log('1. Guardar data en base de datos desde UN CSV (Seleccionar por colección)');
+    console.log('2. Guardar TODA la data en base de datos desde el directorio "raw-data" (Todos los CSVs)'); // Nueva opción
+    console.log('3. Listar ítems');
+    console.log('4. Actualizar ítem');
+    console.log('5. Eliminar ítem');
+    console.log('6. Reporte 1: Empleados con Contrato Vigente');
+    console.log('7. Reporte 2: Detalle de Nómina por Empleado');
+    console.log('8. Reporte 3: Empleados con Auxilio de Transporte');
+    console.log('9. Reporte 4: Resumen de Nómina por Código');
+    console.log('10. Salir'); // La opción de salir ahora es la 10
 
     const opt = await input('Selecciona una opción: ');
 
     switch (opt) {
         case '1':
-            await askdb();
+            await askdb(); // Mantener para importación individual si se desea
             break;
-        case '2':
+        case '2': // Nueva opción para importar todo el directorio
+            await importAllCsvsFromDirectory();
+            break;
+        case '3': // Los casos siguientes cambian de número
             await listItems(await connectDb());
             break;
-        case '3':
+        case '4':
             await updateItem(await connectDb());
             break;
-        case '4':
+        case '5':
             await deleteItem(await connectDb());
             break;
-        case '5':
+        case '6':
             await reporte1(await connectDb());
             break;
-        case '6': 
-            const dbInstance = await connectDb();
+        case '7':
+            const dbInstance2 = await connectDb(); // Renombrar para evitar conflictos
             const empleadoId = await input('Ingresa el ID del empleado: ');
             const nominaId = await input('Ingresa el ID de la nómina: ');
-            await reporte2(dbInstance, empleadoId, nominaId);
+            await reporte2(dbInstance2, empleadoId, nominaId);
             break;
-        case '7': 
+        case '8':
             await reporte3(await connectDb());
             break;
-        case '8': 
-            const dbInstance8 = await connectDb(); 
+        case '9':
+            const dbInstance9 = await connectDb(); // Renombrar para evitar conflictos
             const codigoNomina = await input('Ingresa el Código de la Nómina: ');
-            await reporte4(dbInstance8, codigoNomina);
+            await reporte4(dbInstance9, codigoNomina);
             break;
-        case '9': 
+        case '10': // Nueva opción de salir
             console.log('Saliendo...');
             rl.close();
-            if (client.isConnected()) {
+            if (client.topology && client.topology.isConnected()) { // Verificar si está conectado antes de intentar cerrar
                 await client.close();
                 console.log('Conexión a MongoDB cerrada.');
             }
@@ -101,8 +106,39 @@ async function showMenu() {
     showMenu();
 }
 
+// *** Función para importar todos los CSVs desde el directorio raw-data ***
+async function importAllCsvsFromDirectory() {
+    console.log('\n--- Importar TODOS los CSVs del directorio "raw-data" ---');
+    const dbInstance = await connectDb();
+    const directoryPath = path.join(process.cwd(), 'raw-data'); // Directorio donde se esperan los CSVs
+
+    try {
+        console.log(`Iniciando importación de todos los CSVs desde: ${directoryPath}`);
+        // Iterar sobre todos los nombres de colección definidos
+        for (const key in collectionNames) {
+            if (Object.hasOwnProperty.call(collectionNames, key)) {
+                const collectionName = collectionNames[key];
+                const csvFilePath = path.join(directoryPath, `${collectionName}.csv`);
+
+                // Verificar si el archivo CSV para esta colección existe antes de intentar importarlo
+                if (fs.existsSync(csvFilePath)) {
+                    console.log(`Procesando archivo: ${collectionName}.csv en la colección: ${collectionName}`);
+                    await readAndInsertCsv(csvFilePath, dbInstance, collectionName);
+                } else {
+                    console.log(`[INFO] Archivo ${collectionName}.csv no encontrado en ${directoryPath}. Saltando.`);
+                }
+            }
+        }
+        console.log('Proceso de importación masiva de CSVs completado.');
+    } catch (error) {
+        console.error('Error durante la importación masiva de CSVs:', error.message);
+    }
+}
+
+
+// La función askdb original (para importar un solo archivo)
 async function askdb() {
-    console.log('\n--- Seleccionar Colección para Importar CSV ---');
+    console.log('\n--- Seleccionar Colección para Importar UN CSV ---');
     console.log('1. Área');
     console.log('2. Cargo');
     console.log('3. Ciudad');
@@ -117,7 +153,7 @@ async function askdb() {
     console.log('12. Tipo Novedad');
     console.log('0. Volver al Menú Principal');
 
-    const p = await input("¿Qué colección deseas importar desde CSV?: ");
+    const p = await input("¿Qué colección deseas importar desde CSV? (Esto importará el archivo CSV asociado a esa colección específica): ");
     let selectedCollectionKey;
 
     switch (p) {
@@ -150,6 +186,7 @@ async function askdb() {
     }
 }
 
+// Funciones listItems, updateItem, deleteItem, y reportes (sin cambios significativos en su lógica)
 async function listItems(db) {
     console.log('\n--- Listar Ítems ---');
     console.log('Selecciona la colección a listar:');
@@ -191,12 +228,12 @@ async function listItems(db) {
     try {
         const collection = db.collection(collectionName);
         console.log(`Buscando documentos en la colección '${collectionName}'...`);
-        
+
         const items = await collection.find({}).toArray();
 
         if (items.length > 0) {
             console.log(`Documentos encontrados en '${collectionName}':`);
-            console.table(items); 
+            console.table(items);
         } else {
             console.log(`No hay documentos en la colección '${collectionName}'.`);
         }
@@ -250,7 +287,7 @@ async function updateItem(db) {
 
     try {
         const idToUpdate = await input(`Ingresa el _id del documento en '${collectionName}' que deseas actualizar: `);
-        
+
         console.log('\nIngresa los campos a actualizar (nombreCampo:nuevoValor). Presiona Enter sin escribir nada para terminar.');
         console.log('Ejemplo: nombre:Nuevo Nombre, edad:30');
 
@@ -346,21 +383,21 @@ async function deleteItem(db) {
 
     try {
         const idToDelete = await input(`Ingresa el _id del documento en '${collectionName}' que deseas eliminar: `);
-        
-        
+
+
         const confirmDelete = await input(`¿Estás seguro de que quieres eliminar el documento con _id: ${idToDelete} de '${collectionName}'? (s/n): `);
         if (confirmDelete.toLowerCase() !== 's') {
             console.log('Operación de eliminación cancelada.');
             return;
         }
 
-        
+
         const deleteResult = await deleteDocument(db, collectionName, idToDelete);
 
-        console.log(deleteResult.message); 
+        console.log(deleteResult.message);
 
     } catch (error) {
-        
+
         console.error(`Error en la operación de eliminación:`, error.message);
     }
 }

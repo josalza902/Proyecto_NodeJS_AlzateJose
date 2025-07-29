@@ -1,0 +1,5 @@
+_id,tipoDeIdentificacion,numeroIdentificacion,nombres,apellidos,telefono,email,genero,ciudad,direccion,activo
+66b0f0090000000000000001,CC,1054896320,Laura,Gómez,3104567890,laura.gomez@example.com,F,Bogotá,Calle 45 #30-20,Y
+66b0f0090000000000000002,TI,1023456789,Daniel,Martínez,3201234567,daniel.martinez@example.com,M,Medellín,Carrera 70 #40-15,Y
+66b0f0090000000000000003,CE,3009876543,Mia,Fernández,3005678901,mia.fernandez@example.com,F,Soacha,Diagonal 10 #5-85,Y
+66b0f0090000000000000004,CC,1098765432,Carlos,Ruiz,3117894560,carlos.ruiz@example.com,M,Bogotá,Avenida Siempre Viva #123,Y

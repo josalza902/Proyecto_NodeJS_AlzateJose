@@ -1,0 +1,4 @@
+_id,nombre,tipo,porcentaje,descripcion
+66b0f0060000000000000001,Salario Básico,DEV,1.01,Pago mensual base del empleado
+66b0f0060000000000000002,Salud,DED,0.04,Aporte a salud según legislación
+66b0f0060000000000000003,Pensión,DED,0.04,Aporte a pensión según normativa

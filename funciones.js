@@ -1,32 +1,13 @@
 import fs from "fs";
 import path from "path";
 import { ObjectId } from "mongodb";
-import { error } from "console";
+// import { error } from "console"; // 'error' de 'console' generalmente no se importa directamente
 
-// la dejamos por si acaso nescesitamos leer los archivos csv antes de meter a la base de datos
-// export async function readitem(collectionnameparam){
-//     const nombreColeccion = collectionnameparam;
-
-//     const filepath = path.join(process.cwd(),'raw-data',`${nombreColeccion}.csv`);
-//     try{
-//         const filecontent = fs.readFileSync(filepath,"utf-8");
-//         return filecontent;
-        
-//     }catch(error){
-//         if(error.code==='ENOENT'){
-//             console.error(`Error: El archivo "${nombreColeccion}.csv" no se encontró en la ruta: ${filepath}`)
-//         }else{
-//             console.error("ocurrio un error inesperado",error);
-//         }
-//         return null;
-//     }
-    
-// }
-
+// La función 'readitem' comentada está bien mantenerla así si es para uso futuro potencial o depuración.
 export async function readAndInsertCsv(csvfilepath, db, collectionName) {
     return new Promise((resolve, reject) => {
         if (!fs.existsSync(csvfilepath)) {
-            return reject(new Error(`el archivo no existe en la ruta: ${csvfilepath}`));
+            return reject(new Error(`El archivo no existe en la ruta: ${csvfilepath}`));
         }
 
         const documents = [];
@@ -34,8 +15,9 @@ export async function readAndInsertCsv(csvfilepath, db, collectionName) {
         let isfirstline = true;
         const readstream = fs.createReadStream(csvfilepath, { encoding: 'utf8' });
         let remaining = '';
-        readstream.on('data', (chunck) => {
-            remaining += chunck;
+
+        readstream.on('data', (chunk) => {
+            remaining += chunk;
             let lastnewlineindex = remaining.lastIndexOf('\n');
 
             if (lastnewlineindex !== -1) {
@@ -51,23 +33,101 @@ export async function readAndInsertCsv(csvfilepath, db, collectionName) {
                     } else {
                         const values = line.split(',').map(v => v.trim());
                         if (values.length === heads.length) {
-                            const doc = {};
+                            const tempDoc = {};
                             for (let i = 0; i < heads.length; i++) {
+                                let head = heads[i];
                                 let parsedvalue = values[i];
-                                if (!isNaN(parsedvalue) && parsedvalue !== '') {
-                                    parsedvalue = Number(parsedvalue);
-                                }
-                                doc[heads[i]] = parsedvalue
-                            }
-                            documents.push(doc);
-                        } else {
-                            console.warn(`[ADvertencia]saltando linea malformada: "${line}" en ${csvfilepath}. Número de valores no coincide con los encabezados.`)
-                        }
 
+                                // === AJUSTE DE CONVERSIÓN DE TIPOS ===
+
+                                // 1. Convertir a ObjectId para campos _id y los que terminan en _id o _id_nested
+                                if ((head === '_id' || head.endsWith('_id') || head.match(/_id_nested$/)) && ObjectId.isValid(parsedvalue)) {
+                                    tempDoc[head] = new ObjectId(parsedvalue);
+                                }
+                                // 2. Convertir a Date para campos de fecha
+                                else if (['fecha_inicial', 'fecha_final'].includes(head) && !isNaN(new Date(parsedvalue))) {
+                                    tempDoc[head] = new Date(parsedvalue);
+                                }
+                                // 3. Manejar campos de 'telefono' específicamente como string
+                                else if (head.startsWith('empleado_') && head.includes('telefono')) {
+                                    tempDoc[head] = String(parsedvalue);
+                                }
+                                // 4. ***CAMBIO AQUÍ***: Manejar 'salarioBase' como Number (que mapeará a int en BSON)
+                                else if (head === 'salarioBase' && !isNaN(parsedvalue) && parsedvalue !== '') {
+                                    tempDoc[head] = Number(parsedvalue); // Volvemos a Number
+                                }
+                                // 5. Conversión genérica a Number
+                                else if (!isNaN(parsedvalue) && parsedvalue !== '') {
+                                    tempDoc[head] = Number(parsedvalue);
+                                }
+                                // 6. Dejar como string por defecto
+                                else {
+                                    tempDoc[head] = parsedvalue;
+                                }
+                                // === FIN DE AJUSTE DE CONVERSIÓN DE TIPOS ===
+                            }
+
+                            // === LÓGICA ESPECÍFICA PARA CONTRATOS (Reconstrucción de Objetos Anidados) ===
+                            let finalDoc = { ...tempDoc };
+
+                            if (collectionName === 'contratos') {
+                                finalDoc = {}; // Reiniciamos para construir el documento con objetos anidados
+                                for (const key in tempDoc) {
+                                    if (key.startsWith('empleado_')) {
+                                        if (!finalDoc.empleado) finalDoc.empleado = {};
+                                        const subKey = key.replace('empleado_', '');
+                                        // Forzar ObjectId para empleado.id
+                                        finalDoc.empleado[subKey === 'id_nested' ? 'id' : subKey.replace('_nested', '')] = (subKey === 'id_nested' && ObjectId.isValid(tempDoc[key])) ? new ObjectId(tempDoc[key]) : tempDoc[key];
+                                    } else if (key.startsWith('tipoContrato_')) {
+                                        if (!finalDoc.tipoContrato) finalDoc.tipoContrato = {};
+                                        const subKey = key.replace('tipoContrato_', '');
+                                        // Forzar ObjectId para tipoContrato.id
+                                        finalDoc.tipoContrato[subKey === 'id_nested' ? 'id' : subKey.replace('_nested', '')] = (subKey === 'id_nested' && ObjectId.isValid(tempDoc[key])) ? new ObjectId(tempDoc[key]) : tempDoc[key];
+                                    } else if (key.startsWith('cargo_')) {
+                                        if (!finalDoc.cargo) finalDoc.cargo = {};
+                                        const subKey = key.replace('cargo_', '');
+                                        if (subKey.startsWith('area_')) {
+                                            if (!finalDoc.cargo.area) finalDoc.cargo.area = {};
+                                            const areaSubKey = subKey.replace('area_', '');
+                                            // Forzar ObjectId para cargo.area.id
+                                            finalDoc.cargo.area[areaSubKey === 'id_nested' ? 'id' : areaSubKey.replace('_nested', '')] = (areaSubKey === 'id_nested' && ObjectId.isValid(tempDoc[key])) ? new ObjectId(tempDoc[key]) : tempDoc[key];
+                                        } else {
+                                            // Forzar ObjectId para cargo.id
+                                            finalDoc.cargo[subKey === 'id_nested' ? 'id' : subKey.replace('_nested', '')] = (subKey === 'id_nested' && ObjectId.isValid(tempDoc[key])) ? new ObjectId(tempDoc[key]) : tempDoc[key];
+                                        }
+                                    } else {
+                                        finalDoc[key] = tempDoc[key];
+                                    }
+                                }
+                            }
+                            // === LÓGICA ESPECÍFICA PARA CIUDADES ===
+                            else if (collectionName === 'ciudades') {
+                                finalDoc = {};
+                                for (const key in tempDoc) {
+                                    if (key.startsWith('departamento_') && key.endsWith('_nested')) {
+                                        if (!finalDoc.departamento) finalDoc.departamento = {};
+                                        const subKey = key.replace('departamento_', '').replace('_nested', '');
+                                        // Forzar ObjectId para departamento.id
+                                        finalDoc.departamento[subKey === 'id' ? 'id' : subKey] = (subKey === 'id' && ObjectId.isValid(tempDoc[key])) ? new ObjectId(tempDoc[key]) : tempDoc[key];
+                                    } else if (key === 'departamento_id') {
+                                        finalDoc.departamento_id = tempDoc[key];
+                                    }
+                                    else {
+                                        finalDoc[key] = tempDoc[key];
+                                    }
+                                }
+                            }
+                            // === FIN LÓGICA ESPECÍFICA ===
+
+                            documents.push(finalDoc);
+                        } else {
+                            console.warn(`[ADVERTENCIA] Saltando línea malformada: "${line}" en ${csvfilepath}. El número de valores no coincide con los encabezados.`);
+                        }
                     }
                 }
             }
         });
+
         readstream.on('end', async () => {
             const finallines = remaining.split('\n').filter(line => line.trim() !== '');
             for (const line of finallines) {
@@ -77,48 +137,172 @@ export async function readAndInsertCsv(csvfilepath, db, collectionName) {
                 } else {
                     const values = line.split(',').map(v => v.trim());
                     if (values.length === heads.length) {
-                        const doc = {};
+                        const tempDoc = {};
                         for (let i = 0; i < heads.length; i++) {
+                            let head = heads[i];
                             let parsedvalue = values[i];
-                            if (!isNaN(parsedvalue) && parsedvalue !== '') {
-                                parsedvalue = Number(parsedvalue);
+
+                            // === AJUSTE DE CONVERSIÓN DE TIPOS (duplicado para el final del archivo) ===
+                            if ((head === '_id' || head.endsWith('_id') || head.match(/_id_nested$/)) && ObjectId.isValid(parsedvalue)) {
+                                tempDoc[head] = new ObjectId(parsedvalue);
                             }
-                            doc[heads[i]] = parsedvalue;
+                            else if (['fecha_inicial', 'fecha_final'].includes(head) && !isNaN(new Date(parsedvalue))) {
+                                tempDoc[head] = new Date(parsedvalue);
+                            }
+                            else if (head.startsWith('empleado_') && head.includes('telefono')) {
+                                tempDoc[head] = String(parsedvalue);
+                            }
+                            // ***CAMBIO AQUÍ***: Manejar 'salarioBase' como Number
+                            else if (head === 'salarioBase' && !isNaN(parsedvalue) && parsedvalue !== '') {
+                                tempDoc[head] = Number(parsedvalue); // Volvemos a Number
+                            }
+                            else if (!isNaN(parsedvalue) && parsedvalue !== '') {
+                                tempDoc[head] = Number(parsedvalue);
+                            } else {
+                                tempDoc[head] = parsedvalue;
+                            }
+                            // === FIN DE AJUSTE DE CONVERSIÓN DE TIPOS ===
                         }
-                        documents.push(doc);
+
+                        // === LÓGICA ESPECÍFICA PARA CONTRATOS (duplicado para el final del archivo) ===
+                        let finalDoc = { ...tempDoc };
+
+                        if (collectionName === 'contratos') {
+                            finalDoc = {};
+                            for (const key in tempDoc) {
+                                if (key.startsWith('empleado_')) {
+                                    if (!finalDoc.empleado) finalDoc.empleado = {};
+                                    const subKey = key.replace('empleado_', '');
+                                    finalDoc.empleado[subKey === 'id_nested' ? 'id' : subKey.replace('_nested', '')] = (subKey === 'id_nested' && ObjectId.isValid(tempDoc[key])) ? new ObjectId(tempDoc[key]) : tempDoc[key];
+                                } else if (key.startsWith('tipoContrato_')) {
+                                    if (!finalDoc.tipoContrato) finalDoc.tipoContrato = {};
+                                    const subKey = key.replace('tipoContrato_', '');
+                                    finalDoc.tipoContrato[subKey === 'id_nested' ? 'id' : subKey.replace('_nested', '')] = (subKey === 'id_nested' && ObjectId.isValid(tempDoc[key])) ? new ObjectId(tempDoc[key]) : tempDoc[key];
+                                } else if (key.startsWith('cargo_')) {
+                                    if (!finalDoc.cargo) finalDoc.cargo = {};
+                                    const subKey = key.replace('cargo_', '');
+                                    if (subKey.startsWith('area_')) {
+                                        if (!finalDoc.cargo.area) finalDoc.cargo.area = {};
+                                        const areaSubKey = subKey.replace('area_', '');
+                                        finalDoc.cargo.area[areaSubKey === 'id_nested' ? 'id' : areaSubKey.replace('_nested', '')] = (areaSubKey === 'id_nested' && ObjectId.isValid(tempDoc[key])) ? new ObjectId(tempDoc[key]) : tempDoc[key];
+                                    } else {
+                                        finalDoc.cargo[subKey === 'id_nested' ? 'id' : subKey.replace('_nested', '')] = (subKey === 'id_nested' && ObjectId.isValid(tempDoc[key])) ? new ObjectId(tempDoc[key]) : tempDoc[key];
+                                    }
+                                } else {
+                                    finalDoc[key] = tempDoc[key];
+                                }
+                            }
+                        }
+                        // === LÓGICA ESPECÍFICA PARA CIUDADES ===
+                        else if (collectionName === 'ciudades') {
+                            finalDoc = {};
+                            for (const key in tempDoc) {
+                                if (key.startsWith('departamento_') && key.endsWith('_nested')) {
+                                    if (!finalDoc.departamento) finalDoc.departamento = {};
+                                    const subKey = key.replace('departamento_', '').replace('_nested', '');
+                                    finalDoc.departamento[subKey === 'id' ? 'id' : subKey] = (subKey === 'id' && ObjectId.isValid(tempDoc[key])) ? new ObjectId(tempDoc[key]) : tempDoc[key];
+                                } else if (key === 'departamento_id') {
+                                    finalDoc.departamento_id = tempDoc[key];
+                                }
+                                else {
+                                    finalDoc[key] = tempDoc[key];
+                                }
+                            }
+                        }
+                        documents.push(finalDoc);
                     } else {
-                        console.warn(`[ADVERTENCIA] Saltando línea malformada final: "${line}" en ${csvfilepath}.`)
+                        console.warn(`[ADVERTENCIA] Saltando línea malformada final: "${line}" en ${csvfilepath}.`);
                     }
                 }
-
             }
             if (documents.length > 0) {
                 try {
                     const collection = db.collection(collectionName);
                     const result = await collection.insertMany(documents);
-                    console.log(`Se insertaron ${result.insertedCount} documentos en la colección '${collectionName}'.`);
+                    console.log(`Se insertaron ${result.insertedCount} documentos en la colección '${collectionName}' desde ${csvfilepath}.`);
                     resolve(result);
                 } catch (error) {
-                    console.error(`Error al insertar documentos en MongoDB para ${collectionName}:`, error);
+                    if (error.code === 121 && error.writeErrors && error.writeErrors.length > 0) {
+                        console.error(`Error de validación de esquema en la colección '${collectionName}' desde ${csvfilepath}:`);
+                        error.writeErrors.forEach(err => {
+                            console.error(`  - Documento afectado: ${JSON.stringify(err.err.op)}`);
+                            console.error(`  - Mensaje: ${err.err.errmsg || 'Error de validación desconocido'}`);
+                        });
+                    } else {
+                        console.error(`Error al insertar documentos en MongoDB para ${collectionName} desde ${csvfilepath}:`, error);
+                    }
                     reject(error);
                 }
             } else {
                 console.log(`No se encontraron documentos válidos para insertar en '${collectionName}' desde ${csvfilepath}.`);
-                resolve({ insertedCount: 0 })
+                resolve({ insertedCount: 0 });
             }
         });
+
         readstream.on('error', (err) => {
             console.error(`Error al leer el archivo CSV ${csvfilepath}:`, err);
-            reject(err)
+            reject(err);
         });
-    })
+    });
+}
 
+// Ajustado para determinar el nombre de la colección a partir del nombre del archivo
+export async function readAndInsertAllCsvInDirectory(directoryPath, db) { // Se eliminó el parámetro collectionNames, ya que ahora se deriva
+    try {
+        if (!fs.existsSync(directoryPath)) {
+            throw new Error(`El directorio no existe en la ruta: ${directoryPath}`);
+        }
+        if (!fs.statSync(directoryPath).isDirectory()) {
+            throw new Error(`La ruta proporcionada no es un directorio: ${directoryPath}`);
+        }
+
+        const files = await fs.promises.readdir(directoryPath);
+        const csvFiles = files.filter(file => path.extname(file).toLowerCase() === '.csv');
+
+        if (csvFiles.length === 0) {
+            console.log(`No se encontraron archivos CSV en el directorio: ${directoryPath}`);
+            return { totalInsertedCount: 0 };
+        }
+
+        console.log(`Archivos CSV encontrados en ${directoryPath}: ${csvFiles.join(', ')}`);
+
+        const insertionPromises = csvFiles.map(csvFile => {
+            // Usa el nombre del archivo CSV (sin extensión) como nombre de la colección
+            const collectionName = path.basename(csvFile, '.csv');
+            const csvFilePath = path.join(directoryPath, csvFile);
+            return readAndInsertCsv(csvFilePath, db, collectionName)
+                .catch(error => {
+                    console.error(`[ERROR] Falló la inserción para el archivo ${csvFile}:`, error.message);
+                    return { insertedCount: 0, error: error }; // Devolver una estructura consistente para Promise.all
+                });
+        });
+
+        const results = await Promise.all(insertionPromises);
+
+        const totalInsertedCount = results.reduce((sum, result) => sum + (result.insertedCount || 0), 0);
+        const failedFiles = results.filter(result => result.error);
+
+        if (failedFiles.length > 0) {
+            console.warn(`[ADVERTENCIA] ${failedFiles.length} archivos CSV no se pudieron procesar completamente.`);
+        }
+
+        console.log(`Proceso de importación de CSV completado. Total de documentos insertados: ${totalInsertedCount}`);
+        return {
+            totalInsertedCount,
+            successfulFiles: results.filter(result => !result.error).length,
+            failedFiles: failedFiles.length
+        };
+
+    } catch (error) {
+        console.error('Error general al procesar el directorio CSV:', error);
+        throw error;
+    }
 }
 
 export async function updateDocument(db, collectionName, idToUpdate, updates) {
     let objectId;
     try {
-        objectId = new ObjectId(idToUpdate); 
+        objectId = new ObjectId(idToUpdate);
     } catch (err) {
         throw new Error('El _id ingresado no es un ObjectId válido.');
     }
@@ -126,15 +310,14 @@ export async function updateDocument(db, collectionName, idToUpdate, updates) {
     try {
         const collection = db.collection(collectionName);
 
-        
         const existingDoc = await collection.findOne({ _id: objectId });
-         if (!existingDoc) {
-             return { matchedCount: 0, modifiedCount: 0, message: 'Documento no encontrado.' };
-         }
+        if (!existingDoc) {
+            return { matchedCount: 0, modifiedCount: 0, message: 'Documento no encontrado.' };
+        }
 
         const result = await collection.updateOne(
             { _id: objectId },
-            { $set: updates } 
+            { $set: updates }
         );
 
         if (result.matchedCount === 0) {
@@ -142,7 +325,6 @@ export async function updateDocument(db, collectionName, idToUpdate, updates) {
         } else if (result.modifiedCount === 0) {
             return { matchedCount: result.matchedCount, modifiedCount: 0, message: 'El documento no fue modificado (los valores eran los mismos).' };
         } else {
-           
             const updatedDoc = await collection.findOne({ _id: objectId });
             return {
                 matchedCount: result.matchedCount,
@@ -158,73 +340,90 @@ export async function updateDocument(db, collectionName, idToUpdate, updates) {
     }
 }
 
-export async function updateItem(db){
-    rl.question('ID al elemento a actualizar: ', async(id) => {
+// Estas funciones parecen estar destinadas a una CLI interactiva,
+// requiriendo 'rl' y 'collectionName' de un ámbito superior.
+// Si planeas usarlas, asegúrate de que 'rl' (interfaz de readline) y 'collectionName'
+// estén definidas y sean accesibles en el contexto donde se llaman estas funciones.
+// Por ahora, se mantienen tal cual, asumiendo su contexto.
+export async function updateItem(db) {
+    // 'rl' y 'collectionName' deben estar definidas en el ámbito donde se llama updateItem
+    // o pasadas como parámetros.
+    if (typeof rl === 'undefined' || typeof collectionName === 'undefined') {
+        console.error("Error: 'rl' o 'collectionName' no están definidas para updateItem.");
+        return;
+    }
+    rl.question('ID al elemento a actualizar: ', async (id) => {
         rl.question('Nuevo Nombre: ', async (newName) => {
             const collection = db.collection(collectionName);
-            try{
+            try {
                 const result = await collection.updateOne(
-                    {_id: ObjectId.createFromHexString(id)},
-                    {$set:{name: newName}}
+                    { _id: ObjectId.createFromHexString(id) },
+                    { $set: { name: newName } }
                 );
-                if(result.matchedCount === 0){
+                if (result.matchedCount === 0) {
                     console.log('Elemento no encontrado. ')
-                }else{
+                } else {
                     console.log('Elemento Actualizado')
                 }
-            }catch(err){
-                console.log("id Invalido")
+            } catch (err) {
+                console.log("ID Inválido")
             }
-            showMenu();
+            // showMenu() necesita estar definido
+            if (typeof showMenu === 'function') {
+                showMenu();
+            }
         })
     })
 }
 
 
-export async function deleteItem(db){
-    rl.question('ID del elemento a borrar: ', async (id)=>{
+export async function deleteItem(db) {
+    // 'rl' y 'collectionName' deben estar definidas en el ámbito donde se llama deleteItem
+    // o pasadas como parámetros.
+    if (typeof rl === 'undefined' || typeof collectionName === 'undefined') {
+        console.error("Error: 'rl' o 'collectionName' no están definidas para deleteItem.");
+        return;
+    }
+    rl.question('ID del elemento a borrar: ', async (id) => {
         const collection = db.collection(collectionName);
-        try{
-            const result = await collection.deleteOne({_id: new ObjectId(id)});
-            if(result.deleteCount === 0){
+        try {
+            const result = await collection.deleteOne({ _id: new ObjectId(id) });
+            if (result.deletedCount === 0) {
                 console.log('elemento no encontrado')
-            }else{
-                console.log('Elemento elimindo')
+            } else {
+                console.log('Elemento eliminado')
             }
-        }catch(err){
-            console.log('ID invalido')
+        } catch (err) {
+            console.log('ID inválido')
         }
-        showMenu()
+        // showMenu() necesita estar definido
+        if (typeof showMenu === 'function') {
+            showMenu();
+        }
     });
 }
 
 export async function deleteDocument(db, collectionName, idToDelete) {
     let objectId;
     try {
-       
-        objectId = new ObjectId(idToDelete); 
+        objectId = new ObjectId(idToDelete);
     } catch (err) {
-
         throw new Error('El _id ingresado no es un ObjectId válido.');
     }
 
     try {
         const collection = db.collection(collectionName);
         console.log(`Intentando eliminar documento con _id: ${idToDelete} de la colección '${collectionName}'...`);
-        
-        
+
         const result = await collection.deleteOne({ _id: objectId });
 
         if (result.deletedCount === 0) {
-            
             return { deletedCount: 0, message: `No se encontró ningún documento con _id: ${idToDelete} en la colección '${collectionName}'.` };
         } else {
-            
             return { deletedCount: result.deletedCount, message: `Documento con _id: ${idToDelete} eliminado correctamente de la colección '${collectionName}'.` };
         }
 
     } catch (error) {
-        
         console.error(`Error en deleteDocument para ${collectionName}:`, error);
         throw new Error(`Error en la operación de eliminación: ${error.message}`);
     }
@@ -235,56 +434,46 @@ export async function reporte1(db) {
         console.log('Generando Reporte 1: Empleados por Área y Cargo con Contrato Vigente...');
 
         const empleadosConContrato = await db.collection('contratos').aggregate([
-           
             { $match: { activo: true } },
-
-            
             {
                 $lookup: {
                     from: 'empleados',
-                    localField: 'empleado', 
-                    foreignField: '_id',      
+                    localField: 'empleado',
+                    foreignField: '_id',
                     as: 'empleadoInfo'
                 }
             },
-            { $unwind: '$empleadoInfo' }, 
-            
+            { $unwind: '$empleadoInfo' },
             {
                 $lookup: {
                     from: 'areas',
-                    localField: 'area', 
-                    foreignField: '_id',             
+                    localField: 'area',
+                    foreignField: '_id',
                     as: 'areaInfo'
                 }
             },
             { $unwind: '$areaInfo' },
-
-            
             {
                 $lookup: {
                     from: 'cargos',
-                    localField: 'cargo', 
-                    foreignField: '_id',              
+                    localField: 'cargo',
+                    foreignField: '_id',
                     as: 'cargoInfo'
                 }
             },
             { $unwind: '$cargoInfo' },
-
-            
             {
                 $lookup: {
                     from: 'tipos_identificaciones',
                     localField: 'empleadoInfo.tipoIdentificacion',
-                    foreignField: '_id',                  
+                    foreignField: '_id',
                     as: 'tipoIdInfo'
                 }
             },
             { $unwind: '$tipoIdInfo' },
-
-            
             {
                 $project: {
-                    _id: 0, 
+                    _id: 0,
                     codigoArea: '$areaInfo.codigo',
                     nombreArea: '$areaInfo.nombre',
                     codigoCargo: '$cargoInfo.codigo',
@@ -298,7 +487,6 @@ export async function reporte1(db) {
                     generoEmpleado: '$empleadoInfo.genero'
                 }
             },
-            
             {
                 $sort: {
                     nombreArea: 1,
@@ -312,7 +500,6 @@ export async function reporte1(db) {
             return;
         }
 
-        
         let htmlContent = `
 <!DOCTYPE html>
 <html lang="es">
@@ -377,9 +564,8 @@ export async function reporte1(db) {
     </div>
 </body>
 </html>`;
-        
 
-        const reportFilePath = path.join(process.cwd(), 'lista_de_empleados.html'); 
+        const reportFilePath = path.join(process.cwd(), 'lista_de_empleados.html');
         fs.writeFile(reportFilePath, htmlContent, (error) => {
             if (error) {
                 console.error('Error al escribir el archivo de reporte HTML:', error);
@@ -408,14 +594,12 @@ export async function reporte2(db, empleadoId, nominaId) {
         }
 
         const reportData = await db.collection('nominas').aggregate([
-            
             {
                 $match: {
                     _id: nominaObjectId,
                     id_empleado: empleadoObjectId
                 }
             },
-            
             {
                 $lookup: {
                     from: 'empleados',
@@ -425,31 +609,27 @@ export async function reporte2(db, empleadoId, nominaId) {
                 }
             },
             { $unwind: '$empleadoInfo' },
-            
             {
                 $lookup: {
                     from: 'tipos_identificaciones',
-                    localField: 'empleadoInfo.tipoIdentificacion', 
+                    localField: 'empleadoInfo.tipoIdentificacion',
                     foreignField: '_id',
                     as: 'tipoIdInfo'
                 }
             },
             { $unwind: '$tipoIdInfo' },
-            
             {
                 $lookup: {
                     from: 'contratos',
                     let: { empleadoId: '$id_empleado' },
                     pipeline: [
                         { $match: { $expr: { $eq: ['$empleado', '$$empleadoId'] }, activo: true } },
-                        { $limit: 1 } 
+                        { $limit: 1 }
                     ],
                     as: 'contratoInfo'
                 }
             },
-            { $unwind: { path: '$contratoInfo', preserveNullAndEmptyArrays: true } }, 
-
-            
+            { $unwind: { path: '$contratoInfo', preserveNullAndEmptyArrays: true } },
             {
                 $lookup: {
                     from: 'sacarNominas',
@@ -458,9 +638,7 @@ export async function reporte2(db, empleadoId, nominaId) {
                     as: 'conceptosNomina'
                 }
             },
-            
             { $unwind: '$conceptosNomina' },
-            
             {
                 $lookup: {
                     from: 'conceptos',
@@ -470,7 +648,6 @@ export async function reporte2(db, empleadoId, nominaId) {
                 }
             },
             { $unwind: '$conceptoDetalle' },
-            
             {
                 $lookup: {
                     from: 'tipos_novedades',
@@ -480,47 +657,42 @@ export async function reporte2(db, empleadoId, nominaId) {
                 }
             },
             { $unwind: '$tipoNovedadDetalle' },
-
-            
             {
                 $group: {
-                    _id: '$_id', 
+                    _id: '$_id',
                     tipoIdentificacion: { $first: '$tipoIdInfo.nombre' },
                     numeroIdentificacion: { $first: '$empleadoInfo.numeroIdentificacion' },
                     nombres: { $first: '$empleadoInfo.nombres' },
                     apellidos: { $first: '$empleadoInfo.apellidos' },
-                    salarioBase: { $first: '$contratoInfo.salarioBase' }, 
-
-                    
+                    salarioBase: { $first: '$contratoInfo.salarioBase' },
                     deducciones: {
                         $push: {
                             $cond: {
-                                if: { $eq: ['$tipoNovedadDetalle.nombre', 'Deducción'] }, 
+                                if: { $eq: ['$tipoNovedadDetalle.nombre', 'Deducción'] },
                                 then: {
-                                    codigo: '$conceptoDetalle.codigo', 
+                                    codigo: '$conceptoDetalle.codigo',
                                     nombre: '$conceptoDetalle.nombre',
                                     valor: '$conceptosNomina.valor'
                                 },
-                                else: '$$REMOVE' 
+                                else: '$$REMOVE'
                             }
                         }
                     },
                     devengos: {
                         $push: {
                             $cond: {
-                                if: { $eq: ['$tipoNovedadDetalle.nombre', 'Devengo'] }, 
+                                if: { $eq: ['$tipoNovedadDetalle.nombre', 'Devengo'] },
                                 then: {
                                     codigo: '$conceptoDetalle.codigo',
                                     nombre: '$conceptoDetalle.nombre',
                                     valor: '$conceptosNomina.valor'
                                 },
-                                else: '$$REMOVE' 
+                                else: '$$REMOVE'
                             }
                         }
                     }
                 }
             },
-            
             {
                 $project: {
                     _id: 0,
@@ -541,9 +713,8 @@ export async function reporte2(db, empleadoId, nominaId) {
             return;
         }
 
-        const data = reportData[0]; 
+        const data = reportData[0];
 
-        
         let htmlContent = `
 <!DOCTYPE html>
 <html lang="es">
@@ -634,70 +805,59 @@ export async function reporte2(db, empleadoId, nominaId) {
         console.error('Error al generar el reporte de detalle de nómina:', error);
     }
 }
-const dos_smlmv = 2800000
+const DOS_SMLMV = 2800000; // Definí la constante aquí para que sea accesible
 export async function reporte3(db) {
     try {
         console.log('Generando Reporte 3: Empleados con Auxilio de Transporte...');
 
         const empleadosConAuxilio = await db.collection('contratos').aggregate([
-            
             { $match: { activo: true } },
-
-            
             {
                 $lookup: {
                     from: 'empleados',
-                    localField: 'empleado', 
-                    foreignField: '_id',      
+                    localField: 'empleado',
+                    foreignField: '_id',
                     as: 'empleadoInfo'
                 }
             },
             { $unwind: '$empleadoInfo' },
-            
-            
             {
+                // Asegúrate de que el campo para el salario base en la colección de empleados sea 'salarioBase' o el nombre correcto.
+                // Si en tus CSVs el campo se llama 'salario_base', entonces debería ser 'empleadoInfo.salario_base'
                 $match: {
-                    'empleadoInfo.salario_base': { $lte: dos_smlmv } 
+                    'empleadoInfo.salarioBase': { $lte: DOS_SMLMV }
                 }
             },
-
-            
             {
                 $lookup: {
                     from: 'areas',
-                    localField: 'area', 
+                    localField: 'area',
                     foreignField: '_id',
                     as: 'areaInfo'
                 }
             },
             { $unwind: '$areaInfo' },
-
-            
             {
                 $lookup: {
                     from: 'cargos',
-                    localField: 'cargo', 
+                    localField: 'cargo',
                     foreignField: '_id',
                     as: 'cargoInfo'
                 }
             },
             { $unwind: '$cargoInfo' },
-
-            
             {
                 $lookup: {
                     from: 'tipos_identificaciones',
-                    localField: 'empleadoInfo.tipoIdentificacion', 
+                    localField: 'empleadoInfo.tipoIdentificacion',
                     foreignField: '_id',
                     as: 'tipoIdInfo'
                 }
             },
             { $unwind: '$tipoIdInfo' },
-
-            
             {
                 $project: {
-                    _id: 0, 
+                    _id: 0,
                     codigoArea: '$areaInfo.codigo',
                     nombreArea: '$areaInfo.nombre',
                     codigoCargo: '$cargoInfo.codigo',
@@ -706,10 +866,9 @@ export async function reporte3(db) {
                     numeroIdentificacion: '$empleadoInfo.numeroIdentificacion',
                     nombresEmpleado: '$empleadoInfo.nombres',
                     apellidosEmpleado: '$empleadoInfo.apellidos',
-                    salarioBaseEmpleado: '$empleadoInfo.salario_base'
+                    salarioBaseEmpleado: '$empleadoInfo.salarioBase' // Asegúrate de que el nombre del campo sea correcto aquí
                 }
             },
-           
             {
                 $sort: {
                     nombreArea: 1,
@@ -724,7 +883,6 @@ export async function reporte3(db) {
             return;
         }
 
-       
         let htmlContent = `
 <!DOCTYPE html>
 <html lang="es">
@@ -798,178 +956,175 @@ export async function reporte3(db) {
     }
 }
 
-export async function reporte4(db, codigoNomina) {
+
+export async function reporte4(db, empleadoId, nominaId) {
     try {
-        console.log(`Generando Reporte 4: Resumen de Nómina para Código ${codigoNomina}...`);
+        console.log(`Generando Reporte 4: Resumen de Nómina para Empleado ${empleadoId} y Nómina ${nominaId}...`);
 
-        const reportData = await db.collection('nominas').aggregate([
-            // 1. Filtrar por el código de la nómina
-            { $match: { codigo: codigoNomina } },
+        let empleadoObjectId;
+        let nominaObjectId;
 
-            // 2. Unir con la información del empleado
+        try {
+            empleadoObjectId = new ObjectId(empleadoId);
+            nominaObjectId = new ObjectId(nominaId);
+        } catch (err) {
+            console.error('Error: El ID del empleado o de la nómina no es un ObjectId válido.');
+            return;
+        }
+
+        const reportData = await db.collection('sacarNomina').aggregate([
+            {
+                $match: {
+                    nomina_id: nominaObjectId,
+                    'conceptos.empleado_id': empleadoObjectId // Asumiendo que `sacarNomina` tiene un `empleado_id` dentro de `conceptos` o a nivel raíz
+                }
+            },
             {
                 $lookup: {
                     from: 'empleados',
-                    localField: 'id_empleado',
+                    localField: 'conceptos.empleado_id', // Ajusta este campo si la referencia al empleado está en otro lugar
                     foreignField: '_id',
                     as: 'empleadoInfo'
                 }
             },
             { $unwind: '$empleadoInfo' },
-            
-            // 3. Unir con el tipo de identificación del empleado
             {
                 $lookup: {
                     from: 'tipos_identificaciones',
-                    localField: 'empleadoInfo.tipoIdentificacion', // Campo en 'empleados'
-                    foreignField: '_id',
+                    localField: 'empleadoInfo.tipoDeIdentificacion', // Ajustado a 'tipoDeIdentificacion' según tu CSV de empleados
+                    foreignField: 'codigo', // Relaciona por el campo 'codigo' en tipos_identificaciones
                     as: 'tipoIdInfo'
                 }
             },
             { $unwind: '$tipoIdInfo' },
-
-            // 4. Unir con las entradas de 'sacarNominas' para esta nómina
             {
                 $lookup: {
-                    from: 'sacarNominas',
-                    localField: '_id', // El _id de la nómina actual
-                    foreignField: 'nomina_id',
-                    as: 'conceptosNomina'
+                    from: 'contratos',
+                    let: { empId: '$empleadoInfo._id' },
+                    pipeline: [
+                        { $match: { $expr: { $eq: ['$empleado.id', '$$empId'] }, activo: 'Y' } }, // Ajustado para coincidir con tu estructura de contratos
+                        { $limit: 1 }
+                    ],
+                    as: 'contratoActual'
                 }
             },
-            // 5. Desestructurar los conceptos uno por uno para poder sumarlos
-            { $unwind: { path: '$conceptosNomina', preserveNullAndEmptyArrays: true } }, // preserveNullAndEmptyArrays para incluir nóminas sin conceptos
-            
-            // 6. Unir con el tipo de novedad para distinguir devengos/deducciones
+            { $unwind: { path: '$contratoActual', preserveNullAndEmptyArrays: true } },
             {
-                $lookup: {
-                    from: 'tipos_novedades',
-                    localField: 'conceptosNomina.tipo_novedad_id',
-                    foreignField: '_id',
-                    as: 'tipoNovedadDetalle'
-                }
-            },
-            { $unwind: { path: '$tipoNovedadDetalle', preserveNullAndEmptyArrays: true } },
-
-            // 7. Agrupar para sumar los devengos y deducciones para cada nómina/empleado
-            {
-                $group: {
-                    _id: '$_id', // Agrupar por el ID de la nómina
-                    nominaCodigo: { $first: '$codigo' },
-                    tipoIdentificacion: { $first: '$tipoIdInfo.nombre' },
-                    numeroIdentificacion: { $first: '$empleadoInfo.numeroIdentificacion' },
-                    nombres: { $first: '$empleadoInfo.nombres' },
-                    apellidos: { $first: '$empleadoInfo.apellidos' },
-                    salarioBase: { $first: '$empleadoInfo.salario_base' }, // Salario base del empleado
-
-                    totalDeducciones: {
-                        $sum: {
-                            $cond: {
-                                if: { $eq: ['$tipoNovedadDetalle.nombre', 'Deducción'] }, // Asume el nombre es 'Deducción'
-                                then: '$conceptosNomina.valor',
-                                else: 0
-                            }
+                $project: {
+                    _id: 0,
+                    tipoIdentificacion: '$tipoIdInfo.nombre',
+                    numeroIdentificacion: '$empleadoInfo.numeroIdentificacion',
+                    nombres: '$empleadoInfo.nombres',
+                    apellidos: '$empleadoInfo.apellidos',
+                    salarioBaseContrato: '$contratoActual.salarioBase',
+                    devengos: {
+                        $filter: {
+                            input: '$conceptos',
+                            as: 'concepto',
+                            cond: { $eq: ['$$concepto.tipo', 'DEV'] }
                         }
                     },
-                    totalDevengos: {
-                        $sum: {
-                            $cond: {
-                                if: { $eq: ['$tipoNovedadDetalle.nombre', 'Devengo'] }, // Asume el nombre es 'Devengo'
-                                then: '$conceptosNomina.valor',
-                                else: 0
-                            }
+                    deducciones: {
+                        $filter: {
+                            input: '$conceptos',
+                            as: 'concepto',
+                            cond: { $eq: ['$$concepto.tipo', 'DED'] }
                         }
                     }
                 }
             },
-            // 8. Calcular el neto a pagar y proyectar el formato final
+            {
+                $addFields: {
+                    totalDevengos: { $sum: '$devengos.valor' },
+                    totalDeducciones: { $sum: '$deducciones.valor' }
+                }
+            },
             {
                 $project: {
-                    _id: 0,
-                    nominaCodigo: 1,
                     tipoIdentificacion: 1,
                     numeroIdentificacion: 1,
                     nombres: 1,
                     apellidos: 1,
-                    salarioBase: 1,
-                    totalDeducciones: 1,
+                    salarioBase: '$salarioBaseContrato',
                     totalDevengos: 1,
-                    netoAPagar: { $add: ['$salarioBase', '$totalDevengos', { $multiply: ['$totalDeducciones', -1] }] } // Salario Base + Devengos - Deducciones
+                    totalDeducciones: 1,
+                    netoPagar: { $subtract: [{ $sum: ['$salarioBaseContrato', '$totalDevengos'] }, '$totalDeducciones'] } // Suma el salario base a los devengos antes de restar las deducciones
                 }
             }
         ]).toArray();
 
         if (reportData.length === 0) {
-            console.log(`No se encontró ninguna nómina con el código "${codigoNomina}" o datos asociados.`);
+            console.log(`No se encontraron datos de nómina para el empleado ${empleadoId} y nómina ${nominaId}.`);
             return;
         }
 
-        // --- Generación del Contenido HTML ---
+        const data = reportData[0];
+
         let htmlContent = `
 <!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Resumen de Nómina por Código</title>
+    <title>Resumen de Nómina</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f4; color: #333; }
-        .container { max-width: 1000px; margin: auto; background-color: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1); }
+        .container { max-width: 800px; margin: auto; background-color: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1); }
         h1 { color: #0056b3; text-align: center; margin-bottom: 30px; }
-        h2 { color: #007bff; border-bottom: 2px solid #eee; padding-bottom: 10px; margin-top: 25px; }
-        p strong { color: #555; }
-        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
-        th { background-color: #f2f2f2; }
-        .total-row td { font-weight: bold; background-color: #e0e0e0; }
-        .neto-pagar { background-color: #d4edda; font-weight: bold; } /* Estilo para el neto a pagar */
+        .info-section p { margin-bottom: 10px; font-size: 1.1em; }
+        .info-section p strong { color: #007bff; }
+        .summary-box {
+            background-color: #e6f2ff;
+            border: 1px solid #b3d9ff;
+            border-radius: 5px;
+            padding: 20px;
+            margin-top: 30px;
+            text-align: center;
+        }
+        .summary-box p {
+            font-size: 1.3em;
+            margin: 10px 0;
+            color: #0056b3;
+        }
+        .summary-box .neto-pagar {
+            font-size: 1.8em;
+            font-weight: bold;
+            color: #28a745;
+        }
         .footer { text-align: center; margin-top: 40px; font-size: 0.8em; color: #777; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Resumen de Nómina: ${codigoNomina}</h1>
-        <table>
-            <thead>
-                <tr>
-                    <th>Tipo ID</th>
-                    <th>Número ID</th>
-                    <th>Nombres</th>
-                    <th>Apellidos</th>
-                    <th>Salario Base</th>
-                    <th>Total Devengos</th>
-                    <th>Total Deducciones</th>
-                    <th>Neto a Pagar</th>
-                </tr>
-            </thead>
-            <tbody>
-                ${reportData.map(data => `
-                <tr>
-                    <td>${data.tipoIdentificacion || ''}</td>
-                    <td>${data.numeroIdentificacion || ''}</td>
-                    <td>${data.nombres || ''}</td>
-                    <td>${data.apellidos || ''}</td>
-                    <td>$${data.salarioBase ? data.salarioBase.toLocaleString('es-CO') : '0'}</td>
-                    <td>$${data.totalDevengos ? data.totalDevengos.toLocaleString('es-CO') : '0'}</td>
-                    <td>$${data.totalDeducciones ? data.totalDeducciones.toLocaleString('es-CO') : '0'}</td>
-                    <td class="neto-pagar">$${data.netoAPagar ? data.netoAPagar.toLocaleString('es-CO') : '0'}</td>
-                </tr>`).join('')}
-            </tbody>
-        </table>
+        <h1>Resumen de Nómina</h1>
+
+        <div class="info-section">
+            <p><strong>Tipo de Identificación:</strong> ${data.tipoIdentificacion || 'N/A'}</p>
+            <p><strong>Número de Identificación:</strong> ${data.numeroIdentificacion || 'N/A'}</p>
+            <p><strong>Nombres:</strong> ${data.nombres || 'N/A'}</p>
+            <p><strong>Apellidos:</strong> ${data.apellidos || 'N/A'}</p>
+            <p><strong>Salario Base:</strong> ${data.salarioBase ? `$${Number(data.salarioBase).toLocaleString('es-CO')}` : 'N/A'}</p>
+        </div>
+
+        <div class="summary-box">
+            <p><strong>Total Devengos:</strong> $${data.totalDevengos ? data.totalDevengos.toLocaleString('es-CO') : '0'}</p>
+            <p><strong>Total Deducciones:</strong> $${data.totalDeducciones ? data.totalDeducciones.toLocaleString('es-CO') : '0'}</p>
+            <p class="neto-pagar"><strong>Neto a Pagar:</strong> $${data.netoPagar ? data.netoPagar.toLocaleString('es-CO') : '0'}</p>
+        </div>
     </div>
     <div class="footer">
         <p>Reporte generado el ${new Date().toLocaleDateString()} a las ${new Date().toLocaleTimeString()}</p>
-        <p>Código de Nómina: ${codigoNomina}</p>
+        <p>Para Empleado ID: ${empleadoId}, Nómina ID: ${nominaId}</p>
     </div>
 </body>
 </html>`;
 
-        const reportFilePath = path.join(process.cwd(), `resumen_nomina_${codigoNomina}.html`);
+        const reportFilePath = path.join(process.cwd(), `resumen_nomina_${empleadoId}_${nominaId}.html`);
         fs.writeFile(reportFilePath, htmlContent, (error) => {
             if (error) {
                 console.error('Error al escribir el archivo de reporte HTML:', error);
             } else {
-                console.log(`Reporte "resumen_nomina_${codigoNomina}.html" generado exitosamente en: ${reportFilePath}`);
+                console.log(`Reporte "resumen_nomina_${empleadoId}_${nominaId}.html" generado exitosamente en: ${reportFilePath}`);
             }
         });
 
@@ -977,54 +1132,3 @@ export async function reporte4(db, codigoNomina) {
         console.error('Error al generar el reporte de resumen de nómina:', error);
     }
 }
-
-// export async function listItems(db){
-//     const collection = db.collection(collectionName)
-//     const items = await collection.find().toArray();
-
-//     console.log('Lista de elementos')
-//     items.forEach((item) => {
-//         console.log(`ID: ${item._id} - Nombre: ${item.name}`)
-//     });
-//     showMenu(db);
-// }
-
-// export async function updateItem(db){
-//     rl.question('ID al elemento a actualiozar: ', async(id) => {
-//         rl.question('Nuevo Nombre: ', async (newName) => {
-//             const collection = db.collection(collectionName);
-//             try{
-//                 const result = await collection.updateOne(
-//                     {_id: ObjectId.createFromHexString(id)},
-//                     {$set:{name: newName}}
-//                 );
-//                 if(result.matchedCount === 0){
-//                     console.log('Elemento no encontrado. ')
-//                 }else{
-//                     console.log('Elemento Actualizado')
-//                 }
-//             }catch(err){
-//                 console.log("id Invalido")
-//             }
-//             showMenu();
-//         })
-//     })
-// }
-
-
-// export async function deleteItem(db){
-//     rl.question('ID del elemento a borrar: ', async (id)=>{
-//         const collection = db.collection(collectionName);
-//         try{
-//             const result = await collection.deleteOne({_id: new ObjectId(id)});
-//             if(result.deleteCount === 0){
-//                 console.log('elemento no encontrado')
-//             }else{
-//                 console.log('Elemento elimindo')
-//             }
-//         }catch(err){
-//             console.log('ID invalido')
-//         }
-//         showMenu()
-//     });
-// }
