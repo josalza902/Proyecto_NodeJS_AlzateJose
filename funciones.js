@@ -1,9 +1,8 @@
 import fs from "fs";
 import path from "path";
 import { ObjectId } from "mongodb";
-// import { error } from "console"; // 'error' de 'console' generalmente no se importa directamente
 
-// La función 'readitem' comentada está bien mantenerla así si es para uso futuro potencial o depuración.
+
 
 export async function readAndInsertCsv(csvfilepath, db, collectionName) {
     return new Promise((resolve, reject) => {
@@ -39,40 +38,39 @@ export async function readAndInsertCsv(csvfilepath, db, collectionName) {
                                 let head = heads[i];
                                 let parsedvalue = values[i];
 
-                                // === AJUSTE DE CONVERSIÓN DE TIPOS ===
-
-                                // 1. Convertir a ObjectId para campos _id y los que terminan en _id o _id_nested
+                               
+                                
                                 if ((head === '_id' || head.endsWith('_id') || head.match(/_id_nested$/)) && ObjectId.isValid(parsedvalue)) {
                                     tempDoc[head] = new ObjectId(parsedvalue);
                                 }
-                                // 2. Convertir a Date para campos de fecha
+                               
                                 else if (['fecha_inicial', 'fecha_final'].includes(head) && !isNaN(new Date(parsedvalue))) {
                                     tempDoc[head] = new Date(parsedvalue);
                                 }
-                                // 3. Manejar campos de 'telefono' específicamente como string
+                                
                                 else if (head.startsWith('empleado_') && head.includes('telefono')) {
                                     tempDoc[head] = String(parsedvalue);
                                 }
-                                // 4. ***NUEVO CAMBIO AQUÍ***: Manejar 'salarioBase' como String
-                                else if (head === 'salarioBase') { // Ya no necesitamos verificar si es un número, solo convertirlo a string
+                                
+                                else if (head === 'salarioBase') { 
                                     tempDoc[head] = String(parsedvalue);
                                 }
-                                // 5. Conversión genérica a Number (aplicada si no es ninguno de los casos anteriores y es un número)
+                                
                                 else if (!isNaN(parsedvalue) && parsedvalue !== '') {
                                     tempDoc[head] = Number(parsedvalue);
                                 }
-                                // 6. Dejar como string por defecto (si no encaja en ninguna conversión específica)
+                               
                                 else {
                                     tempDoc[head] = parsedvalue;
                                 }
-                                // === FIN DE AJUSTE DE CONVERSIÓN DE TIPOS ===
+                               
                             }
 
-                            // === LÓGICA ESPECÍFICA PARA CONTRATOS (Reconstrucción de Objetos Anidados) ===
+                           
                             let finalDoc = { ...tempDoc };
 
                             if (collectionName === 'contratos') {
-                                finalDoc = {}; // Reiniciamos para construir el documento con objetos anidados
+                                finalDoc = {}; 
                                 for (const key in tempDoc) {
                                     if (key.startsWith('empleado_')) {
                                         if (!finalDoc.empleado) finalDoc.empleado = {};
@@ -97,7 +95,7 @@ export async function readAndInsertCsv(csvfilepath, db, collectionName) {
                                     }
                                 }
                             }
-                            // === LÓGICA ESPECÍFICA PARA CIUDADES ===
+                            
                             else if (collectionName === 'ciudades') {
                                 finalDoc = {};
                                 for (const key in tempDoc) {
@@ -113,7 +111,7 @@ export async function readAndInsertCsv(csvfilepath, db, collectionName) {
                                     }
                                 }
                             }
-                            // === FIN LÓGICA ESPECÍFICA ===
+                            
 
                             documents.push(finalDoc);
                         } else {
@@ -138,7 +136,7 @@ export async function readAndInsertCsv(csvfilepath, db, collectionName) {
                             let head = heads[i];
                             let parsedvalue = values[i];
 
-                            // === AJUSTE DE CONVERSIÓN DE TIPOS (duplicado para el final del archivo) ===
+                           
                             if ((head === '_id' || head.endsWith('_id') || head.match(/_id_nested$/)) && ObjectId.isValid(parsedvalue)) {
                                 tempDoc[head] = new ObjectId(parsedvalue);
                             }
@@ -148,7 +146,7 @@ export async function readAndInsertCsv(csvfilepath, db, collectionName) {
                             else if (head.startsWith('empleado_') && head.includes('telefono')) {
                                 tempDoc[head] = String(parsedvalue);
                             }
-                            // ***NUEVO CAMBIO AQUÍ***: Manejar 'salarioBase' como String
+                            
                             else if (head === 'salarioBase') {
                                 tempDoc[head] = String(parsedvalue);
                             }
@@ -157,10 +155,10 @@ export async function readAndInsertCsv(csvfilepath, db, collectionName) {
                             } else {
                                 tempDoc[head] = parsedvalue;
                             }
-                            // === FIN DE AJUSTE DE CONVERSIÓN DE TIPOS ===
+                           
                         }
 
-                        // === LÓGICA ESPECÍFICA PARA CONTRATOS (duplicado para el final del archivo) ===
+                       
                         let finalDoc = { ...tempDoc };
 
                         if (collectionName === 'contratos') {
@@ -189,7 +187,7 @@ export async function readAndInsertCsv(csvfilepath, db, collectionName) {
                                 }
                             }
                         }
-                        // === LÓGICA ESPECÍFICA PARA CIUDADES ===
+                       
                         else if (collectionName === 'ciudades') {
                             finalDoc = {};
                             for (const key in tempDoc) {
@@ -242,8 +240,8 @@ export async function readAndInsertCsv(csvfilepath, db, collectionName) {
     });
 }
 
-// Ajustado para determinar el nombre de la colección a partir del nombre del archivo
-export async function readAndInsertAllCsvInDirectory(directoryPath, db) { // Se eliminó el parámetro collectionNames, ya que ahora se deriva
+
+export async function readAndInsertAllCsvInDirectory(directoryPath, db) { 
     try {
         if (!fs.existsSync(directoryPath)) {
             throw new Error(`El directorio no existe en la ruta: ${directoryPath}`);
@@ -263,13 +261,13 @@ export async function readAndInsertAllCsvInDirectory(directoryPath, db) { // Se 
         console.log(`Archivos CSV encontrados en ${directoryPath}: ${csvFiles.join(', ')}`);
 
         const insertionPromises = csvFiles.map(csvFile => {
-            // Usa el nombre del archivo CSV (sin extensión) como nombre de la colección
+           
             const collectionName = path.basename(csvFile, '.csv');
             const csvFilePath = path.join(directoryPath, csvFile);
             return readAndInsertCsv(csvFilePath, db, collectionName)
                 .catch(error => {
                     console.error(`[ERROR] Falló la inserción para el archivo ${csvFile}:`, error.message);
-                    return { insertedCount: 0, error: error }; // Devolver una estructura consistente para Promise.all
+                    return { insertedCount: 0, error: error }; 
                 });
         });
 
@@ -336,14 +334,9 @@ export async function updateDocument(db, collectionName, idToUpdate, updates) {
     }
 }
 
-// Estas funciones parecen estar destinadas a una CLI interactiva,
-// requiriendo 'rl' y 'collectionName' de un ámbito superior.
-// Si planeas usarlas, asegúrate de que 'rl' (interfaz de readline) y 'collectionName'
-// estén definidas y sean accesibles en el contexto donde se llaman estas funciones.
-// Por ahora, se mantienen tal cual, asumiendo su contexto.
+
 export async function updateItem(db) {
-    // 'rl' y 'collectionName' deben estar definidas en el ámbito donde se llama updateItem
-    // o pasadas como parámetros.
+ 
     if (typeof rl === 'undefined' || typeof collectionName === 'undefined') {
         console.error("Error: 'rl' o 'collectionName' no están definidas para updateItem.");
         return;
@@ -364,7 +357,7 @@ export async function updateItem(db) {
             } catch (err) {
                 console.log("ID Inválido")
             }
-            // showMenu() necesita estar definido
+            
             if (typeof showMenu === 'function') {
                 showMenu();
             }
@@ -374,8 +367,7 @@ export async function updateItem(db) {
 
 
 export async function deleteItem(db) {
-    // 'rl' y 'collectionName' deben estar definidas en el ámbito donde se llama deleteItem
-    // o pasadas como parámetros.
+
     if (typeof rl === 'undefined' || typeof collectionName === 'undefined') {
         console.error("Error: 'rl' o 'collectionName' no están definidas para deleteItem.");
         return;
@@ -392,7 +384,7 @@ export async function deleteItem(db) {
         } catch (err) {
             console.log('ID inválido')
         }
-        // showMenu() necesita estar definido
+        
         if (typeof showMenu === 'function') {
             showMenu();
         }
@@ -818,8 +810,7 @@ export async function reporte3(db) {
             },
             { $unwind: '$empleadoInfo' },
             {
-                // Asegúrate de que el campo para el salario base en la colección de empleados sea 'salarioBase' o el nombre correcto.
-                // Si en tus CSVs el campo se llama 'salario_base', entonces debería ser 'empleadoInfo.salario_base'
+                
                 $match: {
                     'empleadoInfo.salarioBase': { $lte: DOS_SMLMV }
                 }
@@ -862,7 +853,7 @@ export async function reporte3(db) {
                     numeroIdentificacion: '$empleadoInfo.numeroIdentificacion',
                     nombresEmpleado: '$empleadoInfo.nombres',
                     apellidosEmpleado: '$empleadoInfo.apellidos',
-                    salarioBaseEmpleado: '$empleadoInfo.salarioBase' // Asegúrate de que el nombre del campo sea correcto aquí
+                    salarioBaseEmpleado: '$empleadoInfo.salarioBase' 
                 }
             },
             {
@@ -972,13 +963,13 @@ export async function reporte4(db, empleadoId, nominaId) {
             {
                 $match: {
                     nomina_id: nominaObjectId,
-                    'conceptos.empleado_id': empleadoObjectId // Asumiendo que `sacarNomina` tiene un `empleado_id` dentro de `conceptos` o a nivel raíz
+                    'conceptos.empleado_id': empleadoObjectId 
                 }
             },
             {
                 $lookup: {
                     from: 'empleados',
-                    localField: 'conceptos.empleado_id', // Ajusta este campo si la referencia al empleado está en otro lugar
+                    localField: 'conceptos.empleado_id', 
                     foreignField: '_id',
                     as: 'empleadoInfo'
                 }
@@ -987,8 +978,8 @@ export async function reporte4(db, empleadoId, nominaId) {
             {
                 $lookup: {
                     from: 'tipos_identificaciones',
-                    localField: 'empleadoInfo.tipoDeIdentificacion', // Ajustado a 'tipoDeIdentificacion' según tu CSV de empleados
-                    foreignField: 'codigo', // Relaciona por el campo 'codigo' en tipos_identificaciones
+                    localField: 'empleadoInfo.tipoDeIdentificacion', 
+                    foreignField: 'codigo', 
                     as: 'tipoIdInfo'
                 }
             },
@@ -998,7 +989,7 @@ export async function reporte4(db, empleadoId, nominaId) {
                     from: 'contratos',
                     let: { empId: '$empleadoInfo._id' },
                     pipeline: [
-                        { $match: { $expr: { $eq: ['$empleado.id', '$$empId'] }, activo: 'Y' } }, // Ajustado para coincidir con tu estructura de contratos
+                        { $match: { $expr: { $eq: ['$empleado.id', '$$empId'] }, activo: 'Y' } }, 
                         { $limit: 1 }
                     ],
                     as: 'contratoActual'
@@ -1044,7 +1035,7 @@ export async function reporte4(db, empleadoId, nominaId) {
                     salarioBase: '$salarioBaseContrato',
                     totalDevengos: 1,
                     totalDeducciones: 1,
-                    netoPagar: { $subtract: [{ $sum: ['$salarioBaseContrato', '$totalDevengos'] }, '$totalDeducciones'] } // Suma el salario base a los devengos antes de restar las deducciones
+                    netoPagar: { $subtract: [{ $sum: ['$salarioBaseContrato', '$totalDevengos'] }, '$totalDeducciones'] } 
                 }
             }
         ]).toArray();
